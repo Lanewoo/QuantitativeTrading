@@ -1,0 +1,8 @@
+alpaca-py
+pandas
+numpy
+yfinance
+python-dotenv
+requests
+streamlit
+altair
