@@ -1,6 +1,12 @@
+"""
+本地模拟券商：持久化 JSON，用于 DRY_RUN、无密钥或港股默认路径。
+不连接真实交易所，仅粗略更新持仓与购买力字段。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+
 from pathlib import Path
 import json
 

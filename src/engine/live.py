@@ -1,3 +1,7 @@
+"""
+实盘引擎：构建券商、拉取 OHLCV、生成信号、风控与下单、交易日志、Webhook 告警与带重试的主循环。
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta

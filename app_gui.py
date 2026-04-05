@@ -1,3 +1,17 @@
+"""
+Streamlit 可视化入口（与 `src/main.py` 共用同一套业务模块）。
+
+布局概览
+--------
+- **路径**：`ROOT` 为项目根；`SRC` 加入 `sys.path` 后才能 `import config` 等（故延迟导入带 `# noqa: E402`）。
+- **侧栏 `_build_cfg()`**：从 `.env` / 环境变量取默认值，再用控件组装不可变 `AppConfig`；美股/港股标的分字段记忆（`SYMBOLS_US` / `SYMBOLS_HK`），切换市场时自动切换输入框内容。
+- **自动持久化**：标的或 Alpaca 密钥变更时写回 `.env`，减少「忘点保存」导致丢配置。
+- **主区**：按钮触发「保存全部」「仅密钥」「回测或单次实盘」；定时实盘通过子进程跑 `python src/main.py` 且 `APP_MODE=live_loop`，PID 写入 `logs/live_loop.pid`。
+- **常驻展示**：当前策略说明 + 各标的最新信号表；底部展示 `logs/live_trades.csv` 尾部。
+
+注意：GUI 侧栏的 `app_mode` 仅含 `backtest` / `live`；`live_loop` 仅由「启动定时实盘」子进程使用。`LIVE_INTERVAL_MINUTES` 等未在侧栏暴露的字段仍来自 `AppConfig.from_env()` 的既有 `.env` 值。
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -14,6 +28,7 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
+# `app_gui.py` 在仓库根目录，业务包在 `src/` 下，须先扩展路径再 import。
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -25,17 +40,24 @@ from market.validation import invalid_symbols  # noqa: E402
 from strategy.selector import generate_signal_for_config  # noqa: E402
 
 
+# 子进程 `live_loop` 写入 PID，用于 GUI 判断「定时实盘是否在跑」及停止时 taskkill/kill。
 LOOP_PID_FILE = ROOT / "logs" / "live_loop.pid"
 
 
+# ---------------------------------------------------------------------------
+# 小工具：序列维度、日期、.env 读写
+# ---------------------------------------------------------------------------
+
+
 def _to_1d_series(values: pd.Series | pd.DataFrame) -> pd.Series:
-    """Normalize possibly 2D yfinance columns to a 1D series."""
+    """yfinance 等可能返回单列 DataFrame，统一成 Series 供策略与图表使用。"""
     if isinstance(values, pd.DataFrame):
         return values.iloc[:, 0]
     return values
 
 
 def _parse_date_safe(value: str, fallback: str) -> date:
+    """解析侧栏日期字符串；非法时用 fallback，避免 `date_input` 因坏数据崩溃。"""
     try:
         return pd.to_datetime(value).date()
     except Exception:
@@ -43,7 +65,7 @@ def _parse_date_safe(value: str, fallback: str) -> date:
 
 
 def _save_env(cfg: AppConfig) -> None:
-    """Persist current GUI form values into .env for CLI/next launch reuse."""
+    """把当前 `AppConfig` 全量写入项目根 `.env`，供 `python -m` CLI 或下次启动 GUI 复用。"""
     pairs = asdict(cfg)
     lines: list[str] = []
     for key, value in pairs.items():
@@ -59,7 +81,7 @@ def _save_env(cfg: AppConfig) -> None:
 
 
 def _save_alpaca_credentials(api_key: str, secret_key: str) -> None:
-    """Save only Alpaca credentials into .env while keeping other keys."""
+    """只更新 Alpaca 两项密钥，其余键保留（与「保存全部配置」相比不覆盖用户手改的其他行）。"""
     env_path = ROOT / ".env"
     existing = dotenv_values(env_path)
     existing["ALPACA_API_KEY"] = api_key
@@ -73,7 +95,15 @@ def _save_alpaca_credentials(api_key: str, secret_key: str) -> None:
 
 
 def _build_cfg() -> AppConfig:
-    """Build AppConfig from sidebar widgets, using env values as defaults."""
+    """
+    从侧栏控件构造本次运行的 `AppConfig`。
+
+    Streamlit 每次交互会整页重跑，因此用 `st.session_state` 保存：
+    - 美股/港股两套标的原文，切换 `market` 时切换显示哪一套；
+    - Alpaca 密钥，避免重跑时输入框被清空。
+
+    未在侧栏出现的字段（如 `futu_host`、`live_interval_minutes`、`alert_webhook_url`）继承 `base = AppConfig.from_env()`。
+    """
     base = AppConfig.from_env()
     env_file = dotenv_values(ROOT / ".env")
     st.sidebar.header("参数配置")
@@ -108,6 +138,7 @@ def _build_cfg() -> AppConfig:
     else:
         st.session_state["symbols_hk_raw"] = symbols_raw
 
+    # 用户改标的即写 .env（SYMBOLS / SYMBOLS_US / SYMBOLS_HK），CLI 与定时子进程能读到一致列表。
     last_saved_symbols = st.session_state.get("_last_saved_symbols", "")
     if symbols_raw != last_saved_symbols:
         env_path = ROOT / ".env"
@@ -153,7 +184,7 @@ def _build_cfg() -> AppConfig:
     saved_api = str(env_file.get("ALPACA_API_KEY") or base.alpaca_api_key)
     saved_secret = str(env_file.get("ALPACA_SECRET_KEY") or base.alpaca_secret_key)
 
-    # Keep credentials in session state so Streamlit reruns do not clear them.
+    # 密钥挂 session_state，避免每次重跑时 text_input 变空。
     if "alpaca_api_key" not in st.session_state:
         st.session_state["alpaca_api_key"] = saved_api
     if "alpaca_secret_key" not in st.session_state:
@@ -232,7 +263,13 @@ def _build_cfg() -> AppConfig:
     return cfg
 
 
+# ---------------------------------------------------------------------------
+# 定时实盘子进程：PID 文件、启停（Windows 用 taskkill，Unix 发 SIGTERM）
+# ---------------------------------------------------------------------------
+
+
 def _is_pid_running(pid: int) -> bool:
+    """`os.kill(pid, 0)` 探测进程是否存在（不发信号）。"""
     try:
         os.kill(pid, 0)
         return True
@@ -252,7 +289,11 @@ def _get_live_loop_pid() -> int:
 
 
 def _start_live_loop(cfg: AppConfig) -> int:
-    """Start detached live_loop process and store PID."""
+    """
+    后台启动 `python src/main.py`，环境变量中强制 `APP_MODE=live_loop`，与当前侧栏参数对齐。
+
+    标准输出/错误丢弃，避免无控制台时阻塞；PID 写入 `LOOP_PID_FILE`。
+    """
     LOOP_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(
@@ -296,10 +337,12 @@ def _start_live_loop(cfg: AppConfig) -> int:
     kwargs = {
         "cwd": str(ROOT),
         "env": env,
+        # 子进程无控制台时若继承管道可能导致阻塞，故丢弃输出。
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
     if os.name == "nt":
+        # 独立进程组 + 脱离控制台，关闭 Streamlit 窗口后子进程仍可继续跑定时任务。
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
         proc = subprocess.Popen([sys.executable, "src/main.py"], creationflags=creationflags, **kwargs)
     else:
@@ -309,7 +352,7 @@ def _start_live_loop(cfg: AppConfig) -> int:
 
 
 def _stop_live_loop(pid: int) -> None:
-    """Stop detached live_loop process by PID and cleanup marker file."""
+    """结束子进程并删除 PID 文件，避免误判为仍在运行。"""
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
     else:
@@ -318,8 +361,18 @@ def _stop_live_loop(pid: int) -> None:
         LOOP_PID_FILE.unlink()
 
 
+# ---------------------------------------------------------------------------
+# 主区展示：回测图表、策略快照、日志
+# ---------------------------------------------------------------------------
+
+
 def _render_backtest(cfg: AppConfig) -> dict[str, pd.DataFrame]:
-    """Render backtest metrics/charts and return exportable per-symbol data."""
+    """
+    按标的拉 K 线，调用引擎 `run_backtest` 显示指标；并本地用 signal 算权益曲线与买卖点图。
+
+    返回各标的可下载的 DataFrame（日期、close、signal、position、equity）；
+    其中 `position = signal.shift(1)` 与说明文档一致，用于展示上的前视偏差规避。
+    """
     st.subheader("回测结果")
     exports: dict[str, pd.DataFrame] = {}
     for symbol in cfg.symbols:
@@ -386,7 +439,7 @@ def _render_backtest(cfg: AppConfig) -> dict[str, pd.DataFrame]:
 
 
 def _render_logs() -> None:
-    """Show recent trade log records for quick operational checks."""
+    """展示 `logs/live_trades.csv` 最近 200 行，便于核对实盘写入是否成功。"""
     st.subheader("交易日志")
     log_path = ROOT / "logs" / "live_trades.csv"
     if not log_path.exists():
@@ -462,7 +515,10 @@ def _render_current_strategy(cfg: AppConfig) -> None:
 
 
 def main() -> None:
-    """Streamlit entrypoint: configuration, execution controls, and result views."""
+    """
+    页面入口：先 `_build_cfg()`，再校验标的；按钮区处理保存/回测/实盘/定时；
+    最后始终渲染策略快照与日志（无需点「执行」即可刷新信号表）。
+    """
     st.set_page_config(page_title="QuantitativeTrading GUI", layout="wide")
     st.title("QuantitativeTrading 操作界面")
     st.caption("默认建议先用 DRY_RUN=true 验证策略行为。")

@@ -1,9 +1,15 @@
+"""
+布林带：收盘价低于下轨偏多 1，高于上轨偏空 0。
+"""
+
 from __future__ import annotations
 
 import pandas as pd
 
 
 def generate_signal(close: pd.Series, window: int, std_mult: float) -> pd.Series:
+    """中轨 ± std_mult * 滚动标准差。"""
+
     ma = close.rolling(window=window).mean()
     std = close.rolling(window=window).std()
     lower = ma - std_mult * std

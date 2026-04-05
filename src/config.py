@@ -1,12 +1,19 @@
+"""
+从环境变量（.env / 系统环境）加载运行配置，供 CLI、GUI、实盘调度共用。
+对应键名见 .env.example，大写与 AppConfig 字段名一致（下划线转下划线）。
+"""
+
 from dataclasses import dataclass
 import os
 from dotenv import load_dotenv
 
 
+# 启动时加载项目根目录 .env（若存在）
 load_dotenv()
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """解析布尔型环境变量：1/true/yes/y/on 为 True。"""
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -15,13 +22,17 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class AppConfig:
-    """Centralized runtime config loaded from environment variables."""
-    app_mode: str
-    market: str
-    symbols: list[str]
+    """集中式运行时配置，不可变；由 from_env() 从环境变量构造。"""
+
+    # --- 运行模式与市场 ---
+    app_mode: str  # APP_MODE: backtest | live | live_loop
+    market: str  # MARKET: US | HK
+    symbols: list[str]  # SYMBOLS: 逗号分隔标的
+
+    # --- 策略参数（均线 / RSI / 布林 / 突破 / MACD，按 STRATEGY_NAME 选用）---
     fast_window: int
     slow_window: int
-    strategy_name: str
+    strategy_name: str  # STRATEGY_NAME: ma_cross | rsi_reversion | ...
     rsi_window: int
     rsi_oversold: float
     rsi_overbought: float
@@ -31,15 +42,21 @@ class AppConfig:
     macd_fast: int
     macd_slow: int
     macd_signal: int
+
+    # --- 回测 ---
     initial_capital: float
     start_date: str
     end_date: str
+
+    # --- 券商：美股 Alpaca / 港股 Futu 或 sim ---
     alpaca_api_key: str
     alpaca_secret_key: str
     alpaca_paper: bool
     futu_host: str
     futu_port: int
-    hk_broker: str
+    hk_broker: str  # HK_BROKER: sim | futu
+
+    # --- 实盘：仓位、风控、调度 ---
     live_qty_per_trade: int
     max_notional_per_trade: float
     allow_short: bool
@@ -51,11 +68,11 @@ class AppConfig:
     stop_loss_pct: float
     take_profit_pct: float
     max_daily_loss_pct: float
-    dry_run: bool
+    dry_run: bool  # True 时不向券商真实下单
 
     @staticmethod
     def from_env() -> "AppConfig":
-        # Keep all defaults in one place for CLI and GUI consistency.
+        # 默认值集中在此，与 GUI 保存的 .env 保持一致
         return AppConfig(
             app_mode=os.getenv("APP_MODE", "backtest").strip().lower(),
             market=os.getenv("MARKET", "US").strip().upper(),

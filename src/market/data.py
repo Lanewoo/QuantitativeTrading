@@ -1,10 +1,17 @@
+"""
+行情数据：yfinance 拉取 OHLCV；港股代码规范为 Yahoo 格式（如 9988.HK）。
+"""
+
 from __future__ import annotations
 
 import pandas as pd
+
 import yfinance as yf
 
 
 def normalize_symbol(symbol: str, market: str) -> str:
+    """按市场把用户输入转成 yfinance 可识别的 ticker。"""
+
     market = market.upper().strip()
     symbol = symbol.strip()
     if market == "US":
@@ -22,6 +29,8 @@ def normalize_symbol(symbol: str, market: str) -> str:
 
 
 def fetch_ohlcv(symbol: str, market: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """下载并返回小写列名的 OHLCV；无数据则抛错。"""
+
     yf_symbol = normalize_symbol(symbol, market)
     df = yf.download(yf_symbol, start=start_date, end=end_date, auto_adjust=True, progress=False)
     if df.empty:

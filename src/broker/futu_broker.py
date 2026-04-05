@@ -1,3 +1,7 @@
+"""
+港股富途接口占位：需本机 OpenD + futu-api 后在此实现具体调用。
+"""
+
 from __future__ import annotations
 
 from .base import BaseBroker

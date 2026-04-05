@@ -1,9 +1,14 @@
+"""
+券商抽象基类：实盘引擎只依赖这些接口，便于切换 Alpaca / Sim / Futu。
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
 
 class BaseBroker(ABC):
+    """统一封装：时钟、持仓、资金、下单。"""
     @abstractmethod
     def is_market_open_now(self) -> bool:
         raise NotImplementedError

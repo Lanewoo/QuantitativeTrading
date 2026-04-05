@@ -1,6 +1,11 @@
+"""
+策略分发：根据 cfg.strategy_name 调用对应 generate_signal，并统一把 close 压成一维。
+"""
+
 from __future__ import annotations
 
 import pandas as pd
+
 
 from config import AppConfig
 from strategy import moving_average, rsi, bollinger, breakout, macd
@@ -14,6 +19,8 @@ def _to_1d_close(close: pd.Series | pd.DataFrame) -> pd.Series:
 
 
 def generate_signal_for_config(close: pd.Series, cfg: AppConfig) -> pd.Series:
+    """输出与 close 同索引的 0/1 序列（1=做多持有，0=空仓）。"""
+
     close = _to_1d_close(close)
     name = cfg.strategy_name
     if name == "ma_cross":

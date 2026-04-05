@@ -1,18 +1,25 @@
+"""
+回测引擎：对单标的 OHLCV 计算策略信号，用 shift(1) 持仓避免前视偏差，输出收益与回撤。
+"""
+
 from __future__ import annotations
 
 import pandas as pd
+
 
 from config import AppConfig
 from strategy.selector import generate_signal_for_config
 
 
 def _to_1d_close(close: pd.Series | pd.DataFrame) -> pd.Series:
+    """港股 yfinance 可能返回单列 DataFrame，压成一维 Series。"""
     if isinstance(close, pd.DataFrame):
         return close.iloc[:, 0]
     return close
 
 
 def run_backtest(
+
     df: pd.DataFrame,
     cfg: AppConfig,
     initial_capital: float,

@@ -1,3 +1,8 @@
+"""
+美股券商：基于 Alpaca Trading API（alpaca-py）。
+提供持仓、账户、时钟、市价单；paper=true 为模拟盘。
+"""
+
 from __future__ import annotations
 
 from alpaca.trading.client import TradingClient
@@ -8,6 +13,8 @@ from .base import BaseBroker
 
 
 class AlpacaBroker(BaseBroker):
+    """Alpaca 实现：与 engine.live 中 US 分支配合使用。"""
+
     def __init__(self, api_key: str, secret_key: str, paper: bool = True) -> None:
         if not api_key or not secret_key:
             raise ValueError("Alpaca credentials are required for live mode.")
